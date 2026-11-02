@@ -202,7 +202,9 @@ def _judge(cfg: Config, *, probe: bool) -> Check:
     judge = judges.build(cfg.judge)
     assert judge is not None
     try:
-        answers = judge.ask({"probe": judges.noul("One plus one equals two.")})
+        answers = judge.ask(
+            {"probe": judges.noul("One plus one equals two.", true="true", false="false")}
+        )
     except judges.JudgeError as exc:
         return Check("judge", FAIL, f"probe failed: {exc}", "check the endpoint, model and key")
     if judges.probability(answers, "probe") < 0.5:

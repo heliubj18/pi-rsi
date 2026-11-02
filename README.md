@@ -127,26 +127,45 @@ pi install git:github.com/heliubj18/pi-rsi@v0.1.0
 
 Restart pi, or run `/reload`. `/rsi` reports the state for the current directory and the
 `recall` tool appears. The package is pinned to the tag; `pi update --extensions`
-reconciles the checkout without moving the ref.
+reconciles the checkout without moving the ref. pi clones it to
+`~/.pi/agent/git/github.com/heliubj18/pi-rsi`; `pi list` prints the path it actually uses.
 
-### From a checkout, for development or to run the CLI directly
+Nothing runs yet: facts and skills are empty, and learning needs a generator the Python
+core can reach. Point it at one once (the `pi` default generator reuses pi's own model, so
+there is nothing to configure if pi can already answer a prompt):
+
+```sh
+PKG=~/.pi/agent/git/github.com/heliubj18/pi-rsi   # as printed by `pi list`
+python3 -I "$PKG/bin/rsi" init                    # ~/.pi/rsi/config.toml, projects.json
+$EDITOR ~/.pi/rsi/projects.json                   # map your repositories to project names
+$EDITOR ~/.pi/rsi/config.toml                     # pick a generator, optionally a judge
+python3 -I "$PKG/bin/rsi" doctor
+python3 -I "$PKG/bin/rsi" index --all
+```
+
+`pi install` does not put a package's `bin` on `PATH`, so the CLI is reached by absolute
+path, exactly as the extensions call it. `RSI_PYTHON` overrides the interpreter
+(`python3` is what they use by default).
+
+### From a checkout
+
+For development, or when you would rather keep a working copy. The result is the same
+package; only the source and the update path differ.
 
 ```sh
 git clone https://github.com/heliubj18/pi-rsi
 cd pi-rsi
-uv sync
-uv run rsi init          # ~/.pi/rsi/config.toml and projects.json
-pi install .             # or: pi -e .
+pi install .            # or: pi -e .  for one invocation only
+python3 -I bin/rsi init
 ```
 
-`pi install` does not put a package's `bin` on `PATH`. The extensions call
-`python3 -I <package>/bin/rsi` by absolute path, and `RSI_PYTHON` overrides the
-interpreter. From a checkout, `uv run rsi` is the same CLI.
+With a checkout you may also use `uv` (`uv sync`, then `uv run rsi …`); it is a
+development convenience, not a requirement. Nothing in the runtime needs it.
 
 ### Verify the installation
 
 ```sh
-uv run rsi doctor        # or: python3 -I <package>/bin/rsi doctor
+python3 -I "$PKG/bin/rsi" doctor     # or: uv run rsi doctor from a checkout
 ```
 
 A healthy setup looks like this. `warn` lines are degradations, not failures:
@@ -165,6 +184,30 @@ ok   state        12 active facts, 3 learned skills
 ok   recall       1841 sessions, 26073 turns, schema v1
 ok   lock         not held
 ```
+
+### Uninstall
+
+```sh
+pi remove git:github.com/heliubj18/pi-rsi    # the source you installed from
+pi list                                     # confirm it is gone
+```
+
+`pi remove` accepts the same source string, or the path you installed from
+(`pi remove ~/src/pi-rsi`), and deletes the extension, skill and command registrations plus
+the matching entry in `settings.json`. For a git source it also deletes the clone under
+`~/.pi/agent/git/`. Running pi again shows no `/rsi`, no `recall` tool, and no
+`rsi_facts` section in the system prompt.
+
+Your memory is not touched, deliberately: `~/.pi/rsi` (facts, learned skills, index,
+run log) survives an uninstall, so reinstalling resumes where you left off. Delete it when
+you want a clean slate:
+
+```sh
+rm -rf ~/.pi/rsi        # every fact and skill this package ever wrote
+```
+
+There is no `rsi uninstall` command on purpose; the state directory is the only thing
+pi-rsi owns, and `rm` is a better interface for it than a program that might get it wrong.
 
 ## Quick start
 

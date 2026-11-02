@@ -160,12 +160,16 @@ def _run(
                     "skill": judges.noul(
                         "This session contains a procedure that took real work to find, would "
                         "save comparable work in a future session, and is not already written "
-                        "down in the repository or its documentation."
+                        "down in the repository or its documentation.",
+                        true="a procedure worth keeping",
+                        false="nothing reusable, or already documented",
                     ),
                     "fact": judges.noul(
                         "This session established at least one durable, verifiable fact (a "
                         "version, identifier, constraint, endpoint or decision with a reason) "
-                        "that is not already recorded and that a future session would need."
+                        "that is not already recorded and that a future session would need.",
+                        true="at least one such fact was established",
+                        false="nothing durable was established",
                     ),
                 }
             )
@@ -337,7 +341,9 @@ def _review(
                 {
                     "scope": judges.noul(
                         "This procedure holds in every repository and every language, not only "
-                        "in the one this session worked on."
+                        "in the one this session worked on.",
+                        true="it generalizes to other repositories",
+                        false="it is specific to this repository",
                     )
                 }
             )
@@ -360,17 +366,23 @@ def _review(
         questions: dict[str, dict[str, Any]] = {
             "durable": judges.noul(
                 "This statement will still be true in a month and is worth carrying into "
-                f"unrelated future sessions: {candidate.text}"
+                f"unrelated future sessions: {candidate.text}",
+                true="durable and worth carrying",
+                false="too specific, or will not age well",
             ),
             "global": judges.noul(
                 "This statement is true for every repository, not only the one it came from: "
-                f"{candidate.text}"
+                f"{candidate.text}",
+                true="true everywhere",
+                false="only true in the repository it came from",
             ),
         }
         similar = _most_similar(candidate.text, by_id.values())
         if similar is not None:
             questions["duplicate"] = judges.noul(
-                f"The recorded fact {similar.id} already says the same thing: {similar.text}"
+                f"The recorded fact {similar.id} already says the same thing: {similar.text}",
+                true="it says the same thing",
+                false="it says something different",
             )
         try:
             answers = judge.ask(questions)
@@ -401,7 +413,9 @@ def _review(
                 {
                     "contradicted": judges.noul(
                         "This session shows that the recorded fact is no longer true: "
-                        f"{fact.id}: {fact.text}"
+                        f"{fact.id}: {fact.text}",
+                        true="the session contradicts it",
+                        false="the session is consistent with it",
                     )
                 }
             )
@@ -425,7 +439,9 @@ def _review(
                 {
                     "replaces": judges.noul(
                         "The new text is a correction of the recorded fact and should replace "
-                        f"it. Recorded: {fact.id}: {fact.text}\nNew: {candidate.text}"
+                        f"it. Recorded: {fact.id}: {fact.text}\nNew: {candidate.text}",
+                        true="the new text corrects the recorded one",
+                        false="they are compatible or unrelated",
                     )
                 }
             )

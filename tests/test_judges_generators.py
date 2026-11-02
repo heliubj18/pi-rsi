@@ -65,17 +65,60 @@ def test_systemone_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def fake_post(url, payload, headers=None, timeout=30):
         captured.update(url=url, payload=payload, headers=headers)
-        return {"answers": {"p": 0.75}}
+        return {
+            "answers": {
+                "p": {"type": "noul", "noul": 0.75},
+                "s": {
+                    "type": "choice",
+                    "choice": "project",
+                    "probabilities": {"project": 0.8, "global": 0.2},
+                    "confidence": 0.6,
+                },
+            }
+        }
 
     monkeypatch.setattr(http, "post_json", fake_post)
     cfg = JudgeConfig(
         provider="systemone", base_url="http://judge.test/", path="/v3/decisions", model="m"
     )
-    answers = judges.build(cfg).ask({"p": judges.noul("x")})
-    assert answers == {"p": 0.75}
+    answers = judges.build(cfg).ask(
+        {
+            "p": judges.noul("x", true="is", false="is not"),
+            "s": judges.choice("y", ["project", "global"]),
+        }
+    )
+    assert answers == {"p": 0.75, "s": "project"}
     assert captured["url"] == "http://judge.test/v3/decisions"
-    assert captured["payload"]["model"] == "m"
-    assert captured["payload"]["questions"]["p"]["type"] == "noul"
+    payload = captured["payload"]
+    assert payload["model"] == "m"
+    assert payload["state"] == {"source": "pi-rsi"}
+    assert payload["questions"]["p"] == {
+        "type": "noul",
+        "instructions": "x",
+        "criteria": {"true": "is", "false": "is not"},
+    }
+    assert payload["questions"]["s"]["criteria"] == {"project": "project", "global": "global"}
+
+
+def test_systemone_rejects_a_choice_that_is_not_the_most_probable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_post(url, payload, headers=None, timeout=30):
+        return {
+            "answers": {
+                "s": {
+                    "type": "choice",
+                    "choice": "global",
+                    "probabilities": {"project": 0.9, "global": 0.1},
+                    "confidence": 0.9,
+                }
+            }
+        }
+
+    monkeypatch.setattr(http, "post_json", fake_post)
+    judge = judges.build(JudgeConfig(provider="systemone", base_url="http://judge.test"))
+    with pytest.raises(judges.JudgeError, match="highest-probability"):
+        judge.ask({"s": judges.choice("y", ["project", "global"])})
 
 
 def test_systemone_http_error_becomes_judge_error(monkeypatch: pytest.MonkeyPatch) -> None:
