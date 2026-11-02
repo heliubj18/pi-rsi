@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Local entry point: run the CLI from a checkout, without installing anything.
+
+The extensions call this file by absolute path as `python3 -I <package>/bin/rsi`.
+`-I` ignores PYTHONPATH and user site-packages, so this script inserts the package's
+own `src` directory and imports from there. The published console script (`uv run rsi`)
+does not need it.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from pi_rsi.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

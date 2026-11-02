@@ -1,0 +1,74 @@
+{
+	"name": "@heliubj18/pi-rsi",
+	"version": "0.1.0",
+	"description": "Self-improvement loop for the pi coding agent: judge every session, keep what is reusable as skills and facts, inject it back, measure it.",
+	"type": "module",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/heliubj18/pi-rsi.git"
+	},
+	"homepage": "https://github.com/heliubj18/pi-rsi#readme",
+	"bugs": {
+		"url": "https://github.com/heliubj18/pi-rsi/issues"
+	},
+	"keywords": [
+		"pi-package",
+		"pi",
+		"pi-coding-agent",
+		"agent",
+		"skills",
+		"memory",
+		"self-improvement"
+	],
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"files": [
+		"extensions",
+		"src",
+		"skills",
+		"bin",
+		"config",
+		"docs",
+		"pyproject.toml",
+		"uv.lock",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE"
+	],
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"scripts": {
+		"check": "uv run ruff check . && uv run ruff format --check . && uv run pytest -q",
+		"lint": "uv run ruff check .",
+		"format": "uv run ruff format .",
+		"test": "uv run pytest -q",
+		"typecheck": "tsc --noEmit",
+		"cli": "uv run rsi"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^1.4.0",
+		"@types/node": "^22.10.0",
+		"typebox": "^1.4.0",
+		"typescript": "^5.7.0"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions/rsi-context.ts",
+			"./extensions/rsi-recall.ts",
+			"./extensions/rsi-learn.ts",
+			"./extensions/rsi-trace.ts"
+		],
+		"skills": [
+			"./skills"
+		]
+	},
+	"os": [
+		"darwin",
+		"linux"
+	]
+}

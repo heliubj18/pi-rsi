@@ -1,0 +1,67 @@
+# pi-rsi configuration.
+#
+# Two independent adapters. The defaults need nothing: an extra `pi` process writes the
+# candidates, and nothing judges them. Adding a judge makes the loop cheaper (one
+# judgement call decides whether the expensive generator call happens at all) and makes
+# what it learns more precise.
+
+[generator]
+# pi | openai | anthropic
+provider = "pi"
+# Empty means pi's configured default model. Use any id `pi --model` accepts.
+model = ""
+# Required for openai/anthropic: the base URL, without a trailing slash.
+base_url = ""
+# "env:NAME", "file:PATH" or a literal.
+api_key = ""
+timeout_s = 180
+
+[judge]
+# none | systemone | openai | anthropic
+# systemone speaks the small JSON protocol described in src/pi_rsi/judges/systemone.py;
+# openai and anthropic speak their chat APIs and answer the same question set.
+provider = "none"
+base_url = ""
+# Only systemone: the path under base_url.
+path = "/v3/decisions"
+model = ""
+api_key = ""
+timeout_s = 30
+
+[judge.thresholds]
+# Gate: if both are below their threshold, no generator call happens.
+gate_skill = 0.5
+gate_fact = 0.5
+# Facts.
+fact_durable = 0.5
+fact_contradicted = 0.8
+fact_supersedes = 0.6
+# A lesson is global only above this confidence.
+scope_global = 0.8
+# Reserved for v0.2; accepted now so a config survives the upgrade.
+skill_blamed = 0.5
+recall_relevant = 0.5
+recall_inject = 0.8
+recall_recent = 0.6
+
+[learning]
+enabled = true
+# Keep the prompt small and the lessons reviewable.
+max_skills_total = 30
+max_skills_per_day = 3
+max_facts_per_session = 3
+max_facts_per_day = 10
+max_facts_per_scope = 40
+digest_chars = 24000
+min_tool_calls = 3
+min_user_turns = 2
+
+[retrieval]
+candidates = 20
+recent = 8
+max_turn_chars = 6000
+max_inject_chars = 4000
+
+[sessions]
+# Where pi writes sessions. Empty means ~/.pi/agent/sessions.
+dir = ""

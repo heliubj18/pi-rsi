@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime state: never committed. Lives in $RSI_HOME (default ~/.pi/rsi).
+.recall.sqlite3*
+learn.out
+snapshots/
+
+# Local configuration: holds endpoints and API keys.
+config.local.toml
+config.toml
+.env
+
+# Node
+node_modules/
+*.tgz
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

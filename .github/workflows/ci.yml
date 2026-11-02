@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python ${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked --python ${{ matrix.python }}
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+      - name: The CLI runs on a bare interpreter
+        run: python${{ matrix.python }} -I bin/rsi --home "$RUNNER_TEMP/rsi" doctor || true
+
+  extensions:
+    name: typescript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  package:
+    name: package metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every file pi is told to load exists
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+
+          root = pathlib.Path(".")
+          manifest = json.loads((root / "package.json").read_text())
+          missing = []
+          for key in ("extensions", "skills"):
+              for entry in manifest["pi"].get(key, []):
+                  if not (root / entry).exists():
+                      missing.append(f"pi.{key}: {entry}")
+          for entry in manifest.get("files", []):
+              if not (root / entry).exists():
+                  missing.append(f"files: {entry}")
+          if missing:
+              sys.exit("missing: " + ", ".join(missing))
+          print("package.json references resolve")
+          PY
+      - name: No machine-specific paths
+        run: |
+          if grep -rInE "/Users/[a-z]|/home/[a-z]+/" --include="*.py" --include="*.ts" --include="*.md" --include="*.toml" --include="*.json" . \
+              --exclude-dir=node_modules --exclude-dir=.venv --exclude=package-lock.json --exclude=uv.lock; then
+            echo "::error::found a hard-coded home directory"
+            exit 1
+          fi

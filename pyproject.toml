@@ -1,0 +1,66 @@
+[project]
+name = "pi-rsi"
+version = "0.1.0"
+description = "Self-improvement loop for the pi coding agent: judge each session, keep what is reusable, inject it back."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "pi-rsi contributors" }]
+keywords = ["pi", "agent", "skills", "memory", "self-improvement"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+# No runtime dependencies: the CLI runs on the standard library, which keeps
+# `pi install git:...` usable on a machine that has nothing but Python.
+dependencies = []
+
+[project.scripts]
+rsi = "pi_rsi.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/heliubj18/pi-rsi"
+Documentation = "https://github.com/heliubj18/pi-rsi/blob/main/docs"
+Issues = "https://github.com/heliubj18/pi-rsi/issues"
+Changelog = "https://github.com/heliubj18/pi-rsi/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pi_rsi"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pi_rsi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+filterwarnings = ["error"]
