@@ -84,6 +84,45 @@ The interpreter pi-rsi runs under was built without the trigram tokenizer (it ne
 system `python3` from Homebrew or python.org both work. `rsi doctor` prints the failing
 probe so you can reproduce it in one line.
 
+## A commit fails the secret scan
+
+`secret-scan.yml` runs gitleaks over the commits a pull request adds. To reproduce exactly
+what CI saw, run the same binary against the same range:
+
+```sh
+ver=8.30.1
+curl -sSfL -O "https://github.com/gitleaks/gitleaks/releases/download/v$ver/gitleaks_${ver}_linux_x64.tar.gz"
+tar -xzf "gitleaks_${ver}_linux_x64.tar.gz" gitleaks
+
+git fetch origin main
+./gitleaks git --no-banner --redact --verbose \
+  --log-opts="--diff-merges=remerge origin/main..HEAD" .
+```
+
+`--diff-merges=remerge` is what makes a merge commit visible: without it the merge itself
+is skipped and a credential added while resolving a conflict would pass. To scan a working
+tree instead of commits, use `gitleaks dir .`, which also picks up files that are not
+committed yet.
+
+If the finding is a real credential, rotate it first and then rewrite the branch; deleting
+it in a later commit does not clear the check, because each commit is scanned on its own.
+
+If it is a false positive:
+
+* a sample value that a test needs on purpose belongs in `.gitleaks.toml` as an exact
+  literal, scoped to `tests/` (`condition = "AND"` with both `paths` and `regexes`), so the
+  same string is still caught anywhere else;
+* anything else belongs in `.gitleaksignore` as its fingerprint, or on the line itself as a
+  `gitleaks:allow` comment. Both are narrower than a path allowlist and survive less well
+  than a rule change, which is why they come last.
+
+### A test fixture needs an obvious fake credential
+
+`.gitleaks.toml` already allows the literals the redaction tests use. A new fixture is a
+one-line addition to that list; keep the value recognisably fake (`AKIA…EXAMPLE`,
+`sk-test-…`) rather than something that looks like a live key, and scope the entry to
+`tests/` so a real credential pasted into a source file still fails the scan.
+
 ## Upgrading
 
 `pi update --extensions` refreshes the code; state is untouched. If a release bumps
