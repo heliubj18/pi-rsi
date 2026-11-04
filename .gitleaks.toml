@@ -1,0 +1,28 @@
+# gitleaks configuration: the default rules, plus the fake credentials that pi-rsi's
+# redaction tests deliberately contain.
+#
+# tests/test_guard.py, tests/test_session.py, tests/test_learner.py, tests/test_cli.py and
+# tests/test_facts_skills.py build sample secrets in order to assert that pi-rsi strips them
+# before writing anything. Those literals are the only ones allowed through, and only in
+# tests/: a real credential committed anywhere else still fails the scan.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "sample credentials written on purpose by the redaction tests"
+condition = "AND"
+paths = ['''^tests/''']
+regexes = [
+  '''sk-abcdefghijklmnopqrstuvwx''',
+  '''ghp_abcdefghijklmnopqrstuvwxyz0123''',
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''0123456789abcdef0123''',
+  '''1234567890abcdefghij''',
+  '''abcdefghijklmnopqrstuvwxyz012345''',
+  '''secret-key-0123456789''',
+]
+
+[[allowlists]]
+description = "byte-compiled copies of those tests, which only exist in a local working tree"
+paths = ['''__pycache__/''', '''\.pyc$''']
