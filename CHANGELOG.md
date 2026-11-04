@@ -10,6 +10,10 @@ First release: the loop works end to end, with measurement built in.
 
 ### Added
 
+- **Secret scan.** `secret-scan.yml` runs gitleaks over the commits a pull request or push
+  adds, one commit at a time, with `--diff-merges=remerge` so a merge resolution is scanned
+  too. `.gitleaks.toml` extends the default rules and allowlists the fake credentials the
+  redaction tests write, scoped to `tests/` and to those exact literals.
 - **pi's own locations respected.** `$RSI_HOME` defaults to a sibling of pi's agent
   directory (`~/.pi/rsi`, or next to `PI_CODING_AGENT_DIR` when that is set), and the
   session directory follows `PI_CODING_AGENT_SESSION_DIR`, then the `sessionDir` setting,

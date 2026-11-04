@@ -465,8 +465,9 @@ uv run rsi doctor --home /tmp/rsi-dev
 
 The suite uses a temporary `$RSI_HOME` with a fake generator and a fake judge, so the whole
 loop is covered without a model call. CI runs the Python suite on Ubuntu and macOS for
-3.11 and 3.13, type-checks the extensions, and verifies that every path the package
-declares to pi exists.
+3.11 and 3.13, type-checks the extensions, verifies that every path the package declares to
+pi exists, and scans the commits a pull request adds with gitleaks (`.gitleaks.toml`
+allowlists only the fake credentials the redaction tests contain).
 
 ```
 extensions/         pi extensions (TypeScript, no build step)
