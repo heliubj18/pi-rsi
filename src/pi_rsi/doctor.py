@@ -231,11 +231,8 @@ def _state(paths: Paths, cfg: Config) -> list[Check]:
     )
     if paths.db.exists():
         try:
-            con = store.connect(paths.db, readonly=True)
-            try:
+            with store.open_db(paths.db, readonly=True) as con:
                 stats = store.stats(con)
-            finally:
-                con.close()
             checks.append(
                 Check(
                     "recall",

@@ -74,15 +74,10 @@ def _sessions_indexed(paths: Paths) -> int:
     if not paths.db.exists():
         return 0
     try:
-        con = store.connect(paths.db, readonly=True)
+        with store.open_db(paths.db, readonly=True) as con:
+            row = con.execute("SELECT count(*) FROM sessions").fetchone()
     except (sqlite3.Error, store.StoreError):
         return 0
-    try:
-        row = con.execute("SELECT count(*) FROM sessions").fetchone()
-    except sqlite3.Error:
-        return 0
-    finally:
-        con.close()
     return int(row[0]) if row else 0
 
 

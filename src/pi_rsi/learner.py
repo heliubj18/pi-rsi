@@ -122,11 +122,8 @@ def _run(
     project = projects.resolve(parsed.record.cwd, mapping=projects.load(paths))
     parsed.record.project = project
 
-    con = store.connect(paths.db)
-    try:
+    with store.open_db(paths.db) as con:
         store.index_session(con, parsed.record, parsed.turns)
-    finally:
-        con.close()
 
     fingerprint = f"{path.stat().st_mtime_ns}|{len(parsed.turns)}|{parsed.record.tool_calls}"
     summary: dict[str, Any] = {

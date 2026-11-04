@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -134,11 +135,31 @@ def connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
     else:
         con = sqlite3.connect(path, timeout=10.0)
         con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA foreign_keys=ON")
-    con.row_factory = sqlite3.Row
-    if not readonly:
-        migrate(con)
+    try:
+        con.execute("PRAGMA foreign_keys=ON")
+        con.row_factory = sqlite3.Row
+        if not readonly:
+            migrate(con)
+    except BaseException:
+        # A refused schema (or any pragma failure) must not leave the connection open:
+        # Python 3.13 turns an unclosed one into a ResourceWarning at collection time.
+        con.close()
+        raise
     return con
+
+
+@contextmanager
+def open_db(path: Path, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
+    """A connection that is closed on the way out, including on an exception.
+
+    Connections are not cheap to leak: Python 3.13 turns an unclosed one into a
+    ResourceWarning at collection time, which pytest escalates to a failure.
+    """
+    con = connect(path, readonly=readonly)
+    try:
+        yield con
+    finally:
+        con.close()
 
 
 def migrate(con: sqlite3.Connection) -> int:
