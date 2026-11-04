@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,6 +21,28 @@ def session_file(tmp_path: Path, **kwargs) -> Path:
 
 def run(paths: Paths, cfg: Config, file: Path, **kwargs) -> dict:
     return learner.learn(paths, file, cfg, **kwargs)
+
+
+def test_a_broken_index_does_not_cost_the_session(
+    paths: Paths, cfg: Config, payload: dict, tmp_path: Path, monkeypatch
+) -> None:
+    """A missing FTS5/trigram tokenizer is an environment problem, not a reason to skip."""
+
+    def broken(path, *, readonly=False):
+        raise sqlite3.OperationalError("no such tokenizer: trigram")
+
+    monkeypatch.setattr(store, "open_db", broken)
+    map_project(paths)
+    summary = run(
+        paths,
+        cfg,
+        session_file(tmp_path),
+        generator=FakeGenerator(payload),
+        judge=FakeJudge({"scope": 0.0, "global": 0.0}),
+    )
+    assert summary["status"] == "learned"
+    assert "trigram" in summary["index_error"]
+    assert facts.read_file(paths.facts_for("proj-a"), "proj-a")
 
 
 def test_happy_path_writes_scoped_skill_and_fact(

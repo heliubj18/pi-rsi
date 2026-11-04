@@ -12,7 +12,8 @@ The loop is written so that it degrades instead of collapsing:
 * no judge configured  -> the gate opens, the generator decides, scope is chosen from
                           the session (project when the directory maps to one);
 * judge configured but failing -> the run proceeds, the failure is logged;
-* generator failing    -> nothing is written, the reason is logged.
+* generator failing    -> nothing is written, the reason is logged;
+* index failing        -> the session is still learned from, the index error is logged.
 
 Only the writes are irreversible, so they are the part with the most checks: secret
 scan, quotas, dedupe, and a snapshot for a skill that replaces an existing one.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import difflib
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -122,8 +124,14 @@ def _run(
     project = projects.resolve(parsed.record.cwd, mapping=projects.load(paths))
     parsed.record.project = project
 
-    with store.open_db(paths.db) as con:
-        store.index_session(con, parsed.record, parsed.turns)
+    # A missing FTS5/trigram tokenizer, a read-only home or a corrupt database must not
+    # cost the session its facts: the index is rebuildable, the transcript is not.
+    index_error = ""
+    try:
+        with store.open_db(paths.db) as con:
+            store.index_session(con, parsed.record, parsed.turns)
+    except sqlite3.Error as exc:
+        index_error = str(exc)
 
     fingerprint = f"{path.stat().st_mtime_ns}|{len(parsed.turns)}|{parsed.record.tool_calls}"
     summary: dict[str, Any] = {
@@ -133,6 +141,8 @@ def _run(
         "tool_calls": parsed.record.tool_calls,
         "fingerprint": fingerprint,
     }
+    if index_error:
+        summary["index_error"] = index_error
 
     if parsed.skipped:
         return {**summary, "status": "nothing", "reason": "session has no user turns"}

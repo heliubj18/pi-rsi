@@ -129,23 +129,39 @@ def now() -> str:
 
 def connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if readonly:
-        uri = f"file:{path}?mode=ro"
-        con = sqlite3.connect(uri, uri=True, timeout=10.0)
-    else:
-        con = sqlite3.connect(path, timeout=10.0)
-        con.execute("PRAGMA journal_mode=WAL")
+    try:
+        if readonly:
+            uri = f"file:{path}?mode=ro"
+            con = sqlite3.connect(uri, uri=True, timeout=10.0)
+        else:
+            con = sqlite3.connect(path, timeout=10.0)
+            con.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error as exc:
+        raise StoreError(f"cannot open {path}: {exc}") from exc
     try:
         con.execute("PRAGMA foreign_keys=ON")
         con.row_factory = sqlite3.Row
         if not readonly:
             migrate(con)
+    except sqlite3.Error as exc:
+        # The connection must not be left open: Python 3.13 turns an unclosed one into a
+        # ResourceWarning at collection time, and the caller only needs the reason.
+        con.close()
+        raise StoreError(_hint(path, exc)) from exc
     except BaseException:
-        # A refused schema (or any pragma failure) must not leave the connection open:
-        # Python 3.13 turns an unclosed one into a ResourceWarning at collection time.
         con.close()
         raise
     return con
+
+
+def _hint(path: Path, exc: sqlite3.Error) -> str:
+    message = str(exc)
+    if "tokenizer" in message or "fts5" in message.lower():
+        return (
+            f"{path}: {message} — this Python was built without FTS5 or without the trigram "
+            "tokenizer; point RSI_PYTHON at a Python 3.11+ with SQLite 3.34 or newer"
+        )
+    return f"cannot use {path}: {message}"
 
 
 @contextmanager

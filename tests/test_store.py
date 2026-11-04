@@ -46,6 +46,15 @@ def test_migrate_sets_user_version(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_missing_tokenizer_blames_the_interpreter(tmp_path: Path, monkeypatch) -> None:
+    def no_tokenizer(con):
+        raise sqlite3.OperationalError("no such tokenizer: trigram")
+
+    monkeypatch.setattr(store, "migrate", no_tokenizer)
+    with pytest.raises(store.StoreError, match="RSI_PYTHON"):
+        store.connect(tmp_path / "db.sqlite3")
+
+
 def test_newer_schema_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "db.sqlite3"
     connection = store.connect(path)
