@@ -64,7 +64,9 @@ Invariants that hold on every path:
    prompt, so it is held to the same standard as a transcript.
 2. A skill overwrite always leaves a snapshot.
 3. Quotas are checked at write time, not at plan time.
-4. One run at a time (`flock` on `state/learn.lock`); a second run reports `locked`.
+4. One run at a time (`flock` on `state/learn.lock`). Requests are queued in
+   `state/queue/` first, and the run holding the lock drains the queue, so a second run
+   waits instead of losing its session.
 5. A run always logs its status and reason, including runs that learned nothing.
 
 ## The two kinds of memory
@@ -146,7 +148,7 @@ Assumed improvement is not evidence. Three mechanisms make a round comparable:
 | secret in a candidate | candidate dropped whole | `refused` in the log |
 | index corrupt | `rsi reindex` | `rsi doctor` |
 | SQLite too old | doctor fails before any session is indexed | `rsi doctor` |
-| concurrent runs | second run returns `locked`, nothing written | log |
+| concurrent runs | second request queued; the lock holder learns from it before releasing | log, `state/queue/` |
 
 ## Extending it
 

@@ -115,6 +115,11 @@ class Paths:
         return self.state / "learn.out"
 
     @property
+    def queue(self) -> Path:
+        """Pending learning requests, one file per session (see ``learner.enqueue``)."""
+        return self.state / "queue"
+
+    @property
     def snapshots(self) -> Path:
         return self.state / "snapshots"
 
