@@ -17,11 +17,20 @@ The loop is written so that it degrades instead of collapsing:
 
 Only the writes are irreversible, so they are the part with the most checks: secret
 scan, quotas, dedupe, and a snapshot for a skill that replaces an existing one.
+
+One run at a time holds ``state/learn.lock``. Requests are not dropped when it is held:
+``enqueue`` writes each one to ``state/queue/`` first, and whoever holds the lock
+drains every queued request before releasing it (``drain``). A request still queued
+after a crash or a timeout is picked up by the next drain, which the extension starts at
+every session start.
 """
 
 from __future__ import annotations
 
+import contextlib
 import difflib
+import hashlib
+import json
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -38,7 +47,16 @@ from .paths import GLOBAL_SCOPE, Paths
 SYSTEM = "You curate a memory for a coding agent. Reply with one JSON object only."
 PROMPT_PATH = Path(__file__).with_name("prompts") / "learn.md"
 MAX_TURN_CHARS_IN_DIGEST = 1500
+SKILL_CHARS_FOR_JUDGE = 4000
 NEAR_DUPLICATE_RATIO = 0.6
+# How long a run waits for the lock before leaving its request to the next drain. Long
+# enough to cover a few model calls by another run, short enough not to pile up.
+LOCK_WAIT_S = 900.0
+# Requests one drain takes before it lets go of the lock, so a queue that keeps filling
+# cannot hold it forever; the rest wait for the next drain.
+MAX_PER_DRAIN = 50
+QUEUE_SUFFIX = ".json"
+CLAIM_SUFFIX = ".claimed"
 
 
 @dataclass(slots=True)
@@ -75,14 +93,20 @@ def learn(
     judge: judges.Judge | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
+    wait_s: float = 0.0,
 ) -> dict[str, Any]:
-    """Learn from one session file. Never raises for an expected failure."""
+    """Learn from one session file. Never raises for an expected failure.
+
+    Takes the lock for this one file, waiting up to ``wait_s``. When it cannot, the
+    result is ``locked`` and nothing is retried: callers that must not lose the request
+    use ``enqueue`` and ``drain`` instead.
+    """
     paths.ensure()
     path = Path(session_file).expanduser()
     base: dict[str, Any] = {"ts": util.stamp(now), "session": path.stem, "file": str(path)}
     try:
-        with util.locked(paths.lock):
-            summary = _run(
+        with util.locked(paths.lock, wait_s=wait_s):
+            return learn_locked(
                 paths,
                 path,
                 cfg,
@@ -96,6 +120,32 @@ def learn(
         summary = {**base, "status": "locked", "reason": str(exc)}
         _log(paths, summary)
         return summary
+
+
+def learn_locked(
+    paths: Paths,
+    path: Path,
+    cfg: Config,
+    *,
+    force: bool = False,
+    generator: Generator | None = None,
+    judge: judges.Judge | None = None,
+    now: datetime | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """``learn`` for a caller that already holds the lock."""
+    base: dict[str, Any] = {"ts": util.stamp(now), "session": path.stem, "file": str(path)}
+    try:
+        summary = _run(
+            paths,
+            path,
+            cfg,
+            force=force,
+            generator=generator,
+            judge=judge,
+            now=now,
+            dry_run=dry_run,
+        )
     except (ConfigError, GeneratorError, judges.JudgeError) as exc:
         summary = {**base, "status": "error", "reason": str(exc)}
         _log(paths, summary)
@@ -104,6 +154,124 @@ def learn(
     if not dry_run:
         _log(paths, summary)
     return summary
+
+
+def queue_key(path: Path) -> str:
+    """One queue file per transcript: a second request for it replaces the first."""
+    resolved = str(Path(path).expanduser().resolve())
+    return f"{Path(path).stem[:40]}-{hashlib.sha256(resolved.encode()).hexdigest()[:12]}"
+
+
+def enqueue(paths: Paths, path: Path, *, force: bool = False, settle: bool = False) -> Path:
+    """Record a learning request durably, before anything can fail.
+
+    Writing the request is a rename of a complete file, so a reader never sees half of
+    one. A second request for the same transcript keeps the stronger flags.
+    """
+    paths.ensure()
+    paths.queue.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = paths.queue / (queue_key(path) + QUEUE_SUFFIX)
+    previous = _read_request(target) or {}
+    request = {
+        "file": str(Path(path).expanduser().resolve()),
+        "force": bool(force or previous.get("force")),
+        "settle": bool(settle or previous.get("settle")),
+        "queued": previous.get("queued") or util.stamp(),
+    }
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(request, sort_keys=True), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, target)
+    return target
+
+
+def pending(paths: Paths) -> list[Path]:
+    """Queued requests, oldest first (claims left by a crashed run included)."""
+    if not paths.queue.is_dir():
+        return []
+    entries = [
+        entry
+        for entry in paths.queue.iterdir()
+        if entry.name.endswith((QUEUE_SUFFIX, CLAIM_SUFFIX)) and not entry.name.startswith(".")
+    ]
+    return sorted(entries, key=lambda entry: (_mtime(entry), entry.name))
+
+
+def drain(
+    paths: Paths,
+    cfg: Config,
+    *,
+    generator: Generator | None = None,
+    judge: judges.Judge | None = None,
+    wait_s: float = LOCK_WAIT_S,
+    now: datetime | None = None,
+    limit: int = MAX_PER_DRAIN,
+) -> dict[str, Any]:
+    """Take the lock (waiting up to ``wait_s``) and learn from every queued request.
+
+    The queue is re-read after each request, so one that arrives while this run holds
+    the lock is processed before it is released, up to ``limit`` requests per drain.
+    Each request is attempted once: a failure is logged, not retried forever.
+    """
+    paths.ensure()
+    results: list[dict[str, Any]] = []
+    try:
+        with util.locked(paths.lock, wait_s=wait_s):
+            while len(results) < limit:
+                queue = pending(paths)
+                if not queue:
+                    break
+                entry = queue[0]
+                claim = entry
+                if entry.name.endswith(QUEUE_SUFFIX):
+                    claim = entry.with_name(entry.name[: -len(QUEUE_SUFFIX)] + CLAIM_SUFFIX)
+                    try:
+                        os.replace(entry, claim)
+                    except FileNotFoundError:
+                        continue
+                request = _read_request(claim)
+                try:
+                    if request is None or not request.get("file"):
+                        results.append(
+                            {"status": "error", "reason": f"unreadable request {claim.name}"}
+                        )
+                        continue
+                    file = Path(request["file"])
+                    if request.get("settle"):
+                        util.wait_until_settled(file)
+                    results.append(
+                        learn_locked(
+                            paths,
+                            file,
+                            cfg,
+                            force=bool(request.get("force")),
+                            generator=generator,
+                            judge=judge,
+                            now=now,
+                        )
+                    )
+                finally:
+                    with contextlib.suppress(FileNotFoundError):
+                        claim.unlink()
+    except util.LockedError:
+        return {"status": "waiting", "processed": results, "pending": len(pending(paths))}
+    left = len(pending(paths))
+    return {"status": "drained" if not left else "partial", "processed": results, "pending": left}
+
+
+def _read_request(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _run(
@@ -159,22 +327,26 @@ def _run(
             "reason": "too short to hold a reusable lesson",
         }
 
+    digest = _digest(parsed, limit=cfg.learning.digest_chars)
     judge_error = ""
     if judge is not None:
+        # The judge sees only the question text, so the session goes in with it.
+        evidence = f"\n\nSession digest:\n{digest}"
         try:
             gate = judge.ask(
                 {
                     "skill": judges.noul(
                         "This session contains a procedure that took real work to find, would "
                         "save comparable work in a future session, and is not already written "
-                        "down in the repository or its documentation.",
+                        "down in the repository or its documentation." + evidence,
                         true="a procedure worth keeping",
                         false="nothing reusable, or already documented",
                     ),
                     "fact": judges.noul(
                         "This session established at least one durable, verifiable fact (a "
                         "version, identifier, constraint, endpoint or decision with a reason) "
-                        "that is not already recorded and that a future session would need.",
+                        "that is not already recorded and that a future session would need."
+                        + evidence,
                         true="at least one such fact was established",
                         false="nothing durable was established",
                     ),
@@ -198,7 +370,7 @@ def _run(
     learned = skills.list_learned(paths)
     prompt = _prompt(
         project=project,
-        digest=_digest(parsed),
+        digest=digest,
         facts_block=facts.render(existing_facts, limit_chars=3000),
         skills_block=skills.render_index(learned),
     )
@@ -212,7 +384,7 @@ def _run(
     summary["dropped"] = plan.dropped
 
     if judge is not None:
-        _review(plan, judge, cfg, plan_existing=existing_facts, project=project)
+        _review(plan, judge, cfg, plan_existing=existing_facts, project=project, digest=digest)
     else:
         # Without a judge the conservative scope wins: a global fact follows the agent
         # into every repository, and only a second opinion should be able to do that.
@@ -250,15 +422,32 @@ def _prompt(*, project: str | None, digest: str, facts_block: str, skills_block:
     return template + "\n\n---\n\n" + "\n\n".join(sections)
 
 
-def _digest(parsed: session.ParsedSession) -> str:
-    lines: list[str] = []
-    for turn in parsed.turns:
-        lines.append(f"### turn {turn.turn}\n{util.clip(turn.text, MAX_TURN_CHARS_IN_DIGEST)}")
+def _digest(parsed: session.ParsedSession, *, limit: int = 0) -> str:
+    """Turns, then feedback, within ``limit`` characters (0: no limit).
+
+    When the session is too long the earliest turns are dropped: the conclusion of a
+    session is at its end, and the feedback is kept whole.
+    """
+    turns = [
+        f"### turn {turn.turn}\n{util.clip(turn.text, MAX_TURN_CHARS_IN_DIGEST)}"
+        for turn in parsed.turns
+    ]
+    feedback: list[str] = []
     for entry in parsed.feedback:
         rating = entry.get("rating") or entry.get("value") or "?"
         reason = entry.get("reason") or ""
-        lines.append(f"### feedback\n{rating} {reason}".strip())
-    return "\n\n".join(lines)
+        feedback.append(f"### feedback\n{rating} {reason}".strip())
+    if limit > 0:
+        budget = limit - sum(len(item) + 2 for item in feedback)
+        kept: list[str] = []
+        for item in reversed(turns):
+            if budget - (len(item) + 2) < 0:
+                kept.append(f"(earlier {len(turns) - len(kept)} turns omitted for length)")
+                break
+            kept.append(item)
+            budget -= len(item) + 2
+        turns = list(reversed(kept))
+    return "\n\n".join(turns + feedback)
 
 
 def _worth(parsed: session.ParsedSession, cfg: Config) -> bool:
@@ -336,6 +525,7 @@ def _review(
     *,
     plan_existing: list[facts.Fact],
     project: str | None,
+    digest: str = "",
 ) -> None:
     """Second judge pass: scope, durability, duplicates, retirements.
 
@@ -348,7 +538,9 @@ def _review(
                 {
                     "scope": judges.noul(
                         "This procedure holds in every repository and every language, not only "
-                        "in the one this session worked on.",
+                        "in the one this session worked on.\n\n"
+                        f"Procedure {plan.skill.name}: {plan.skill.description}\n"
+                        f"{util.clip(plan.skill.body, SKILL_CHARS_FOR_JUDGE)}",
                         true="it generalizes to other repositories",
                         false="it is specific to this repository",
                     )
@@ -372,8 +564,10 @@ def _review(
     for candidate in plan.add:
         questions: dict[str, dict[str, Any]] = {
             "durable": judges.noul(
-                "This statement will still be true in a month and is worth carrying into "
-                f"unrelated future sessions: {candidate.text}",
+                "This statement will still be true in a month, and a future session in the "
+                "same repository would need it or save real work by knowing it. It does "
+                "not have to apply to other repositories; that is judged separately: "
+                f"{candidate.text}",
                 true="durable and worth carrying",
                 false="too specific, or will not age well",
             ),
@@ -420,7 +614,7 @@ def _review(
                 {
                     "contradicted": judges.noul(
                         "This session shows that the recorded fact is no longer true: "
-                        f"{fact.id}: {fact.text}",
+                        f"{fact.id}: {fact.text}\n\nSession digest:\n{digest}",
                         true="the session contradicts it",
                         false="the session is consistent with it",
                     )

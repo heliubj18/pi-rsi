@@ -172,7 +172,18 @@ def _parser() -> argparse.ArgumentParser:
     reindex.add_argument("--json", action="store_true")
 
     learn = sub.add_parser("learn", help="learn from one session file")
-    learn.add_argument("file")
+    learn.add_argument("file", nargs="?", default=None)
+    learn.add_argument(
+        "--drain",
+        action="store_true",
+        help="learn from every queued request (what the extension starts); takes no file",
+    )
+    learn.add_argument(
+        "--wait",
+        type=float,
+        default=None,
+        help="seconds to wait for another run to finish (default 900); 0 gives up at once",
+    )
     learn.add_argument(
         "--force", action="store_true", help="ignore the duplicate and length checks"
     )
@@ -385,23 +396,66 @@ def _reindex(args: argparse.Namespace, paths: Paths) -> int:
 
 
 def _learn(args: argparse.Namespace, paths: Paths) -> int:
-    cfg = load(paths)
-    judge = None if args.no_judge else judge_module.build(cfg.judge)
-    generator = None
-    if args.model:
-        from dataclasses import replace
+    """Learn from one session, or (``--drain``) from every queued request.
 
-        model_cfg = replace(cfg.generator, model=args.model)
-        generator = generator_module.build(model_cfg)
-    summary = learner.learn(
-        paths,
-        args.file,
-        cfg,
-        force=args.force,
-        generator=generator,
-        judge=judge,
-        dry_run=args.dry_run,
-    )
+    A plain run is enqueued first and then drains the queue, so a request is never lost
+    to another run holding the lock: if this run cannot get the lock in time, its request
+    stays queued and the next drain picks it up. ``--dry-run``, ``--no-judge`` and
+    ``--model`` change how one session is judged, so they bypass the queue.
+    """
+    cfg = load(paths)
+    wait_s = learner.LOCK_WAIT_S if args.wait is None else max(0.0, args.wait)
+    judge = None if args.no_judge else judge_module.build(cfg.judge)
+    if args.drain:
+        if args.file:
+            return _fail("learn --drain takes no file", EXIT_USAGE)
+        return _report_drain(learner.drain(paths, cfg, judge=judge, wait_s=wait_s), args)
+    if not args.file:
+        return _fail("learn needs a session file, or --drain", EXIT_USAGE)
+    file = Path(args.file).expanduser()
+
+    if args.dry_run or args.no_judge or args.model:
+        generator = None
+        if args.model:
+            from dataclasses import replace
+
+            generator = generator_module.build(replace(cfg.generator, model=args.model))
+        summary = learner.learn(
+            paths,
+            file,
+            cfg,
+            force=args.force,
+            generator=generator,
+            judge=judge,
+            dry_run=args.dry_run,
+            wait_s=wait_s,
+        )
+        return _report_one(summary, args)
+
+    learner.enqueue(paths, file, force=args.force)
+    result = learner.drain(paths, cfg, judge=judge, wait_s=wait_s)
+    mine = [row for row in result["processed"] if row.get("file") == str(file.resolve())]
+    if mine:
+        return _report_one(mine[-1], args)
+    key = learner.queue_key(file)
+    if any(entry.name.startswith(key) for entry in learner.pending(paths)):
+        summary = {
+            "session": file.stem,
+            "file": str(file),
+            "status": "queued",
+            "reason": "another run holds the lock; this request is queued and the next run learns from it",
+        }
+    else:
+        summary = {
+            "session": file.stem,
+            "file": str(file),
+            "status": "taken",
+            "reason": "another run picked up this request; rsi log shows its result",
+        }
+    return _report_one(summary, args)
+
+
+def _report_one(summary: dict[str, Any], args: argparse.Namespace) -> int:
     if args.json:
         _json(summary)
     else:
@@ -411,6 +465,19 @@ def _learn(args: argparse.Namespace, paths: Paths) -> int:
             if value:
                 print(f"  {key}: {value}")
     return EXIT_OK if summary.get("status") not in ("error", "locked") else EXIT_STATE
+
+
+def _report_drain(result: dict[str, Any], args: argparse.Namespace) -> int:
+    if args.json:
+        _json(result)
+        return EXIT_OK
+    for row in result["processed"]:
+        print(f"{row.get('status')}: {row.get('session', '')} {row.get('reason', '')}".rstrip())
+    if result["status"] == "waiting":
+        print(f"another run holds the lock; {result['pending']} request(s) stay queued for it")
+    elif not result["processed"]:
+        print("queue empty")
+    return EXIT_OK
 
 
 def _facts(args: argparse.Namespace, paths: Paths) -> int:

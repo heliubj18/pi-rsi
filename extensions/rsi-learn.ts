@@ -6,6 +6,13 @@
  * `$RSI_HOME/state/learn.out` and its decisions to `$RSI_HOME/state/learn.jsonl`, which
  * `rsi log` prints.
  *
+ * One learner runs at a time. `rsi learn <file>` queues its request before it waits for
+ * the lock, and whoever holds the lock works through the whole queue, so a session that
+ * ends while another one is learning is not lost. A request left behind by a crash or a
+ * reboot is picked up at the next session start, which starts
+ * `rsi learn --drain --wait 0` when the queue is not empty (it returns at once when
+ * another run is already draining).
+ *
  * Compaction gets its own hook: the turns that are about to be summarized away are
  * indexed first, so `recall` can still find their exact text later. It is detached and
  * never delays the compaction.
@@ -14,12 +21,32 @@
  * entirely, for benchmarking a configuration on the same tasks.
  */
 
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { errorText, learnLog, rsi, rsiDetached } from "./lib/rsi.ts";
+import { errorText, learnLog, rsi, rsiDetached, rsiHome } from "./lib/rsi.ts";
 
 const FACT_ID = /^f-[0-9a-f]{8}$/;
 
+/** True when an earlier run left learning requests in `$RSI_HOME/state/queue`. */
+function queued(): boolean {
+	try {
+		return readdirSync(join(rsiHome(), "state", "queue")).some(
+			(name) => !name.startsWith(".") && (name.endsWith(".json") || name.endsWith(".claimed")),
+		);
+	} catch {
+		return false;
+	}
+}
+
 export default function (pi: ExtensionAPI) {
+	pi.on("session_start", async () => {
+		if (process.env.RSI_EVAL === "1" || !queued()) {
+			return;
+		}
+		rsiDetached(["learn", "--drain", "--wait", "0"], learnLog());
+	});
+
 	pi.on("session_shutdown", async (event, ctx) => {
 		// "reload" keeps the same session going; every other reason ends it.
 		if (event.reason === "reload" || process.env.RSI_LEARN === "0" || process.env.RSI_EVAL === "1") {

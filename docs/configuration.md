@@ -183,6 +183,7 @@ $RSI_HOME/
     learn.jsonl              one JSON line per learner run
     learn.out                the last run, human readable
     learn.lock               held while a run is in progress
+    queue/<session>.json     learning requests waiting for the lock
     snapshots/<stamp>/<scope>/<skill>/SKILL.md
 ```
 

@@ -49,6 +49,22 @@ First release: the loop works end to end, with measurement built in.
 - **Tests.** 126 pytest cases covering the store, parsing, redaction, dedupe, quotas,
   every judge and generator adapter, the full learner loop with fakes, and the CLI.
 
+### Fixed
+
+- The judge now sees what it judges: the gate and contradiction questions carry the
+  session digest, and the skill scope question carries the skill. Before, they were asked
+  about "this session" with no session attached.
+- `[learning] digest_chars` is enforced; the earliest turns are dropped first.
+- A session that ends while another one is learning is no longer lost. `rsi learn` queues
+  its request in `state/queue/` before it waits (up to 900 s, `--wait`) for the lock, and
+  the run holding the lock works through the whole queue before releasing it. Before, the
+  second run logged `locked` and the session was never learned from. Requests left by a
+  crash or reboot are drained at the next session start (`rsi learn --drain`).
+- The durability question asked whether a fact was worth carrying into "unrelated future
+  sessions", so the judge dropped facts that only matter in their own repository. It now
+  asks about future sessions in the same repository; whether a fact holds everywhere is
+  still the separate scope question.
+
 ### Known limits
 
 - pi sessions only; no importer for other harnesses.

@@ -46,12 +46,19 @@ record it again — that is usually correct. If it is not, the session digest pr
 contains the old conclusion: retire the fact with a reason that names the correction, and
 the reason is shown to the next run in the facts block.
 
-## `locked`
+## `locked` or `queued`
 
-A learner run is already in progress, or a previous run died while holding the lock. The
-lock is `flock` on `state/learn.lock`, released by the kernel when the process exits, so a
-stale lock does not need manual cleanup. Persistent `locked` rows mean a run is hanging:
-check for a stuck `pi` process from the generator.
+One learner runs at a time (`flock` on `state/learn.lock`, released by the kernel when the
+process exits, so a stale lock needs no cleanup). `rsi learn <file>` queues its request in
+`state/queue/` before it waits for the lock, and the run holding the lock works through
+the whole queue, so a session that ends during another run is learned from afterwards,
+not lost. `rsi learn` prints `queued` when it gave up waiting (900 s, `--wait`) and left
+the request for the next run, and `taken` when another run picked it up.
+
+`locked` now comes only from `--dry-run`, `--no-judge` or `--model` runs, which bypass
+the queue. Requests left in `state/queue/` by a crashed run are drained at the next pi
+session start, or now with `rsi learn --drain`. A queue that never empties means a run is
+hanging: check for a stuck `pi` process from the generator.
 
 ## Recall returns nothing
 
